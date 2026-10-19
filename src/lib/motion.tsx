@@ -14,10 +14,22 @@ export function MotionRegion({ signature, children }: { signature: string; child
     let run: GenerationRun | undefined;
     let frame = 0;
     let active = false;
+    let expired = false;
     let observer: ResizeObserver | undefined;
     const previousVisibility = element.style.visibility;
     // Preserve layout while waiting for fonts; never use display:none for measurement.
     element.style.visibility = 'hidden';
+    // Embedded/background browsers can suspend animation frames even with a loaded DOM.
+    // Motion must never make usable content depend on the host drawing another frame.
+    const watchdog = setTimeout(() => {
+      expired = true;
+      cancelAnimationFrame(frame);
+      run?.cancel();
+      observer?.disconnect();
+      active = false;
+      element.style.visibility = previousVisibility;
+      element.dataset.motion = 'idle';
+    }, 4000);
     const cancel = () => {
       if (!active) return;
       active = false;
@@ -25,9 +37,9 @@ export function MotionRegion({ signature, children }: { signature: string; child
       element.dataset.motion = 'idle';
     };
     void document.fonts.ready.then(() => {
-      if (disposed) return;
+      if (disposed || expired) return;
       frame = requestAnimationFrame(() => {
-        if (disposed) return;
+        if (disposed || expired) return;
         element.style.visibility = previousVisibility;
         const bounds = element.getBoundingClientRect();
         if (!bounds.width) return;
@@ -42,6 +54,7 @@ export function MotionRegion({ signature, children }: { signature: string; child
         void run.finished.then(() => {
           if (disposed) return;
           active = false;
+          clearTimeout(watchdog);
           element.dataset.motion = 'idle';
           observer?.disconnect();
         });
@@ -52,6 +65,7 @@ export function MotionRegion({ signature, children }: { signature: string; child
     window.addEventListener('resize', cancel);
     return () => {
       disposed = true;
+      clearTimeout(watchdog);
       cancelAnimationFrame(frame);
       observer?.disconnect();
       run?.cancel();

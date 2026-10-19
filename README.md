@@ -99,7 +99,7 @@ tests/                            unit, API and browser tests
 
 `intent → OpenUI program → validate → commit DOM → measure → draw structure → reveal`
 
-A meaningful prop change triggers only its region; unrelated cards retain state. Replay does not invoke an LLM. Scrolling or resizing cancels overlays to avoid positional drift. Upstream cancellation also resolves `finished`; that promise is not used as a business-success signal.
+A meaningful prop change triggers only its region; unrelated cards retain state. Replay does not invoke an LLM. Scrolling or resizing cancels overlays to avoid positional drift. A four-second fail-open watchdog restores content if an embedded/background host suspends animation frames. Upstream cancellation also resolves `finished`; that promise is not used as a business-success signal.
 
 This is a reveal of already laid-out UI, not real model progress, arbitrary SVG morphing or pixel reconstruction of a Canvas/image. Generation text panels are intentionally not used so the demo does not fabricate agent reasoning.
 

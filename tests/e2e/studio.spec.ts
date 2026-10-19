@@ -21,7 +21,7 @@ test('chat edits only changed widgets, keeps interaction state and replays safel
   expect(await page.locator('.t-gen').count()).toBeLessThanOrEqual(4);
   await expect(page.locator('.t-gen')).toHaveCount(0, { timeout: 7000 });
   await page.getByRole('button', { name: 'OpenUI', exact: true }).click();
-  await expect(page.locator('pre')).toContainText('MetricCard');
+  await expect(page.locator('.code-pane pre')).toContainText('MetricCard');
   const downloaded = page.waitForEvent('download');
   await page.getByRole('button', { name: '导出' }).click();
   expect((await downloaded).suggestedFilename()).toBe('forma-replay.openui');

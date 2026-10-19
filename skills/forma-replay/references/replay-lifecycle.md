@@ -10,6 +10,7 @@
 - On scroll or resize, stop the overlay and reveal the component: the upstream overlay is positioned relative to the document, not nested scrollers.
 - `cancel()` resolves upstream `finished` too. It must not be interpreted as a successful generation event. No feedback loop from `onDone` to replay.
 - Honor `prefers-reduced-motion` and the user's animation toggle.
+- Retain the four-second fail-open watchdog: embedded/background hosts may suspend animation frames. Content must become visible even when no animation frame ever runs.
 - Avoid using MutationObserver to watch animation-owned style changes; it can trigger itself indefinitely.
 - The generation animation measures already-rendered UI. It is not an actual AI progress trace and is not a generic A→B geometry morph.
 
