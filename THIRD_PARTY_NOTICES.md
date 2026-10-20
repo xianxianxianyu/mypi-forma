@@ -1,5 +1,9 @@
 # Third-party notices
 
+## Scope of the repository MIT license
+
+`LICENSE` (MIT) covers original myPi Forma code, documentation and Skill. It does **not** relicense third-party material. In particular, files under `src/vendor/transitions-ui-generation/` retain the separate Transitions.dev License below, and adapted Open Intelligent UI files retain their MIT notice at `src/components/intelligent/LICENSE`. npm dependencies are not vendored and keep their own package licenses.
+
 ## Transitions.dev UI generation runtime
 
 Source: https://github.com/Jakubantalik/transitions.dev/tree/7ec0b0b0b8beb15788a9de68a40ec6be2d5e84b5/skills/transitions-ui-generation
