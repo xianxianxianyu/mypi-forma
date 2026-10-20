@@ -23,8 +23,15 @@ export const componentSchemas = {
   MetricCard: metricSchema, ActivityChart: chartSchema,
   PlanCard: planSchema, PreferenceCard: preferencesSchema,
 };
+export const chatTurnSchema = z.object({
+  role: z.enum(['user', 'assistant']),
+  text: z.string().trim().min(1).max(2000),
+}).strict();
+export type ChatTurn = z.infer<typeof chatTurnSchema>;
 export const requestSchema = z.object({
+  backend: z.enum(['codex', 'pi']).optional(),
   prompt: z.string().trim().min(1).max(2000),
   currentProgram: z.string().max(18000).default(''),
+  history: z.array(chatTurnSchema).max(16).default([]),
 }).strict();
 export type GenerateRequest = z.infer<typeof requestSchema>;

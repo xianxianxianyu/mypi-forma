@@ -1,12 +1,14 @@
-import { useId, useState } from 'react';
+import { useId } from 'react';
 import { createLibrary, defineComponent } from '@openuidev/react-lang';
 import { ArrowUpRight, Check, ChevronRight, SlidersHorizontal, Sparkles } from 'lucide-react';
 import { z } from 'zod';
 import { chartSchema, metricSchema, planSchema, preferencesSchema } from '../lib/schemas';
 import { MotionRegion } from '../lib/motion';
+import { useWidgetState } from '../lib/widget-state';
+import { intelligentComponents, functions, actions } from './intelligent';
 
 function PreferenceView({ props }: { props: z.infer<typeof preferencesSchema> }) {
-  const [checked, setChecked] = useState<Record<string, boolean>>({});
+  const [checked, setChecked] = useWidgetState<Record<string, boolean>>(props.id, {});
   return <article className="widget preference-card" data-widget-id={props.id}>
     <div className="widget-eyebrow"><SlidersHorizontal size={16} /> YOUR WORKSPACE</div>
     <h3>{props.title}</h3><p className="muted">{props.description}</p>
@@ -14,12 +16,12 @@ function PreferenceView({ props }: { props: z.infer<typeof preferencesSchema> })
       <span>{option}</span><input type="checkbox" role="switch" checked={checked[option] ?? true}
         onChange={(event) => setChecked((state) => ({ ...state, [option]: event.target.checked }))} />
     </label>)}</div>
-    <div className="widget-footer"><span className="status-dot" /> Changes saved locally in this preview</div>
+    <div className="widget-footer"><span className="status-dot" /> Changes stay local to this message</div>
   </article>;
 }
 
 function PlanView({ props }: { props: z.infer<typeof planSchema> }) {
-  const [selected, setSelected] = useState(false);
+  const [selected, setSelected] = useWidgetState(props.id, false);
   return <article className="widget plan-card" data-widget-id={props.id}>
     <div className="plan-heading"><span className="widget-eyebrow">MADE FOR YOUR NEXT CHAPTER</span><Sparkles size={18} /></div>
     <h3>{props.title}</h3><p className="muted">{props.description}</p>
@@ -32,7 +34,7 @@ function PlanView({ props }: { props: z.infer<typeof planSchema> }) {
 }
 
 function ChartView({ props }: { props: z.infer<typeof chartSchema> }) {
-  const [period, setPeriod] = useState<'week' | 'month'>('week');
+  const [period, setPeriod] = useWidgetState<'week' | 'month'>(props.id, 'week');
   const gradientId = useId().replaceAll(':', '');
   const values = props.values.map((value, i) => period === 'week' ? value : Math.round(value * (1.15 + i * .025)));
   const max = Math.max(...values, 1) * 1.18;
@@ -69,11 +71,11 @@ const ActivityChart = defineComponent({ name: 'ActivityChart', description: 'A l
   component: ({ props }) => <MotionRegion signature={JSON.stringify(props)}><ChartView props={props} /></MotionRegion> });
 const PlanCard = defineComponent({ name: 'PlanCard', description: 'A pricing plan with 1–5 benefits and a local-only selection button. No payment occurs.', props: planSchema,
   component: ({ props }) => <MotionRegion signature={JSON.stringify(props)}><PlanView props={props} /></MotionRegion> });
-const PreferenceCard = defineComponent({ name: 'PreferenceCard', description: 'A settings panel with 1–4 accessible interactive switches. State is local to this preview.', props: preferencesSchema,
+const PreferenceCard = defineComponent({ name: 'PreferenceCard', description: 'A settings panel with 1–4 accessible interactive switches. State is local to this message.', props: preferencesSchema,
   component: ({ props }) => <MotionRegion signature={JSON.stringify(props)}><PreferenceView props={props} /></MotionRegion> });
 const Showcase = defineComponent({
-  name: 'Showcase', description: 'The root canvas. Compose 1–6 widgets with stable statement names and stable unique ids.',
+  name: 'Showcase', description: 'The root inline UI block in an assistant message. Compose 1–6 widgets with stable statement names and stable unique ids.',
   props: z.object({ title: z.string().min(1).max(100), subtitle: z.string().max(180), children: z.array(z.union([MetricCard.ref, ActivityChart.ref, PlanCard.ref, PreferenceCard.ref])).min(1).max(6) }),
   component: ({ props, renderNode }) => <section className="showcase"><header className="showcase-heading"><span className="eyebrow">YOUR NEXT GREAT INTERFACE</span><h2>{props.title}</h2><p>{props.subtitle}</p></header><div className="widget-grid">{renderNode(props.children)}</div></section>,
 });
-export const library = createLibrary({ root: 'Showcase', components: [Showcase, MetricCard, ActivityChart, PlanCard, PreferenceCard] });
+export const library = createLibrary({ root: 'Col', components: [...intelligentComponents, Showcase, MetricCard, ActivityChart, PlanCard, PreferenceCard], functions, actions });

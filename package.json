@@ -1,9 +1,9 @@
 {
-  "name": "forma-replay",
+  "name": "mypi-forma",
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "A conversational component studio built with OpenUI and replayable generation motion.",
+  "description": "Dynamic UI generation and interactive presentation for myPi, built with OpenUI and replayable generation motion.",
   "scripts": {
     "dev": "concurrently -k -n api,web \"tsx watch server/index.ts\" \"vite --host 127.0.0.1\"",
     "build": "tsc --noEmit && vite build",
@@ -16,10 +16,13 @@
     "node": ">=22"
   },
   "dependencies": {
+    "@assistant-ui/react": "^0.15.29",
+    "@assistant-ui/react-markdown": "^0.14.23",
     "@openuidev/lang-core": "^1.0.1",
     "@openuidev/react-lang": "^1.0.1",
     "dotenv": "^18.0.8",
     "express": "^5.3.0",
+    "katex": "^0.19.0",
     "lucide-react": "^1.59.0",
     "react": "^19.3.1",
     "react-dom": "^19.3.1",
@@ -28,6 +31,7 @@
   "devDependencies": {
     "@playwright/test": "^1.64.1",
     "@types/express": "^5.0.6",
+    "@types/katex": "^0.16.8",
     "@types/node": "^26.6.5",
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",

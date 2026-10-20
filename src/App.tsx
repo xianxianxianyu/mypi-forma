@@ -1,127 +1,179 @@
-import { useEffect, useRef, useState, type FormEvent } from 'react';
-import { Renderer } from '@openuidev/react-lang';
-import { ArrowDownToLine, ArrowUp, Check, ChevronDown, Code2, Command, Layers3, LoaderCircle, MessageSquare, Monitor, Plus, RotateCcw, Sparkles, Square, WandSparkles } from 'lucide-react';
-import { library } from './components/library';
-import { INITIAL_PROGRAM, validateProgram } from './lib/program';
-import { MotionContext } from './lib/motion';
+import { createContext, useContext, useEffect, useRef, useState } from 'react';
+import {
+  ActionBarPrimitive, AssistantRuntimeProvider, ComposerPrimitive, MessagePrimitive,
+  ThreadListItemPrimitive, ThreadListPrimitive, ThreadPrimitive, useAuiState, useLocalRuntime,
+  type AssistantRuntime,
+} from '@assistant-ui/react';
+import { MarkdownTextPrimitive } from '@assistant-ui/react-markdown';
+import { ArrowDown, ArrowUp, Check, Copy, LoaderCircle, MessageSquare, Plus, RotateCcw, Sparkles, Square } from 'lucide-react';
+import { InlineOpenUI, ReplayPreferences } from './components/inline-openui';
+import { createChatAdapter, messageText } from './lib/chat-adapter';
+import { backendLabel, useBackend, type SelectableBackend } from './lib/backend';
+import { demoPrompts } from './lib/demo-prompts';
+import type { WidgetStateStore } from './lib/widget-state';
 
-type Message = { role: 'user' | 'assistant'; text: string };
-type Version = { program: string; label: string };
+const BackendContext = createContext<ReturnType<typeof useBackend> | null>(null);
+const useBackendContext = () => useContext(BackendContext)!;
 const suggestions = [
-  { icon: '↗', title: '更新增长数据', prompt: '更新营收和图表数据，展示最新增长' },
-  { icon: '◈', title: '设计订阅套餐', prompt: '生成两张精致的订阅套餐卡片' },
-  { icon: '◐', title: '换成柔和紫色', prompt: '把指标卡改成柔和的紫色' },
-  { icon: '文', title: '换一套中文文案', prompt: '把工作台改成中文文案' },
+  { label: '设计订阅套餐', description: '清晰展示价格与权益', prompt: '生成两张精致的订阅套餐卡片' },
+  { label: '生成增长仪表盘', description: '让数据有重点、有层次', prompt: '生成一个包含营收、趋势和设置的仪表盘，使用示例数据' },
+  { label: '先聊聊设计', description: '了解支持哪些控件', prompt: '先不要生成控件，介绍你能帮我做什么' },
 ];
 
-export default function App() {
-  const [program, setProgram] = useState(INITIAL_PROGRAM);
-  const [versions, setVersions] = useState<Version[]>([{ program: INITIAL_PROGRAM, label: '初始工作台' }]);
-  const [messages, setMessages] = useState<Message[]>([{ role: 'assistant', text: '你好，我是 Forma。描述你想要的控件，我们一起把它打磨得更好。右侧已经准备好一组可交互的示例。' }]);
-  const [input, setInput] = useState('');
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState('');
-  const [mode, setMode] = useState<'connecting' | 'demo' | 'live' | 'offline'>('connecting');
-  const [model, setModel] = useState('');
-  const [replay, setReplay] = useState(0);
+function MarkdownText() {
+  return <MarkdownTextPrimitive className="markdown" smooth={false} skipHtml
+    components={{ a: ({ children }) => <span>{children}</span>, img: ({ alt }) => <span>{alt || '图片'}</span> }} />;
+}
+const messageParts = { Text: MarkdownText, data: { by_name: { openui: InlineOpenUI } } };
+
+function WaitingStatus() {
+  const { mode } = useBackendContext();
+  const [elapsed, setElapsed] = useState(0);
+  useEffect(() => { const timer = setInterval(() => setElapsed((value) => value + 1), 1000); return () => clearInterval(timer); }, []);
+  return <div className="waiting-status"><LoaderCircle size={15} className="spin" aria-hidden="true" />
+    <span role="status">{mode === 'pi' ? '等待 Pi · DeepSeek Flash 回复' : mode === 'codex' ? '等待 Codex CLI 回复' : mode === 'demo' ? '应用本地演示规则' : '等待模型回复'}</span>
+    <span className="elapsed" aria-hidden="true">{elapsed} 秒</span>
+  </div>;
+}
+
+function AssistantMessage() {
+  const status = useAuiState((state) => state.message.status);
+  const copied = useAuiState((state) => state.message.isCopied);
+  const { ready } = useBackendContext();
+  const failed = status?.type === 'incomplete' && status.reason === 'error';
+  const cancelled = status?.type === 'incomplete' && status.reason === 'cancelled';
+  const error = failed && typeof status.error === 'object' && status.error && 'message' in status.error
+    ? String(status.error.message) : '生成失败，请稍后重试。';
+  return <MessagePrimitive.Root className="chat-message assistant-message" role="article" aria-label="助手回复">
+    <div className="message-byline"><span className="assistant-mark"><Sparkles size={14} aria-hidden="true" /></span><strong>myPi Forma</strong><span>让想法成为界面</span></div>
+    <div className="message-body"><MessagePrimitive.Parts components={messageParts} />
+      {status?.type === 'running' && <WaitingStatus />}
+      {failed && <p className="inline-error" role="alert">{error}</p>}
+      {cancelled && <p className="cancelled-status">已停止生成，之前的消息和控件保持不变。</p>}
+    </div>
+    {status?.type !== 'running' && <ActionBarPrimitive.Root className="message-actions">
+      {failed || cancelled ? <ActionBarPrimitive.Reload disabled={!ready}><RotateCcw size={14} />重试这条消息</ActionBarPrimitive.Reload>
+        : <ActionBarPrimitive.Copy aria-label="复制回复">{copied ? <Check size={14} /> : <Copy size={14} />}{copied ? '已复制' : '复制回复'}</ActionBarPrimitive.Copy>}
+    </ActionBarPrimitive.Root>}
+  </MessagePrimitive.Root>;
+}
+function UserMessage() {
+  return <MessagePrimitive.Root className="chat-message user-message" role="article" aria-label="用户消息">
+    <div className="user-bubble"><MessagePrimitive.Parts /></div>
+  </MessagePrimitive.Root>;
+}
+const threadMessages = { UserMessage, AssistantMessage };
+
+function ThreadItem() {
+  const running = useAuiState((state) => state.thread.isRunning);
+  const title = useAuiState((state) => state.threadListItem.title) || '新对话';
+  return <ThreadListItemPrimitive.Root className="thread-item">
+    <ThreadListItemPrimitive.Trigger disabled={running} title={title}>
+      <MessageSquare size={15} aria-hidden="true" /><span><ThreadListItemPrimitive.Title fallback="新对话" /></span>
+    </ThreadListItemPrimitive.Trigger>
+  </ThreadListItemPrimitive.Root>;
+}
+
+function ChatShell({ runtime }: { runtime: AssistantRuntime }) {
+  const backend = useBackendContext();
+  const running = useAuiState((state) => state.thread.isRunning);
+  const firstUser = useAuiState((state) => {
+    const message = state.thread.messages.find((item) => item.role === 'user');
+    return message ? messageText(message) : '';
+  });
+  const threadId = useAuiState((state) => state.threadListItem.id);
+  const title = useAuiState((state) => state.threadListItem.title);
   const [motion, setMotion] = useState(true);
-  const [view, setView] = useState<'preview' | 'code'>('preview');
-  const [copied, setCopied] = useState(false);
-  const request = useRef<AbortController | null>(null);
-  const sequence = useRef(0);
-  const messageEnd = useRef<HTMLDivElement>(null);
-  const copyTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
-
+  const [seen] = useState(() => new Set<string>());
+  const [widgetStates] = useState<WidgetStateStore>(() => new Map());
+  const [examplesOpen, setExamplesOpen] = useState(() => window.matchMedia('(min-width: 701px)').matches);
+  const exampleUnavailable = !backend.ready || running || backend.mode === 'demo';
+  function sendExample(prompt: string) {
+    if (exampleUnavailable || runtime.threads.main.getState().isRunning) return;
+    // Append directly: do not clear a draft, reset the thread, or substitute a fixed demo response.
+    runtime.threads.main.append(prompt);
+  }
   useEffect(() => {
-    const controller = new AbortController();
-    fetch('/api/config', { signal: controller.signal }).then((r) => { if (!r.ok) throw new Error(); return r.json(); })
-      .then((data) => { setMode(data.mode); setModel(data.model || ''); })
-      .catch(() => { if (!controller.signal.aborted) setMode('offline'); });
-    return () => { controller.abort(); request.current?.abort(); clearTimeout(copyTimer.current); };
-  }, []);
-  useEffect(() => { messageEnd.current?.scrollIntoView({ block: 'nearest' }); }, [messages, busy]);
-
-  async function send(prompt: string) {
-    if (!prompt.trim()) return;
-    request.current?.abort();
-    const controller = new AbortController(); request.current = controller;
-    const ticket = ++sequence.current;
-    setBusy(true); setError(''); setInput(''); setView('preview');
-    setMessages((history) => [...history, { role: 'user', text: prompt }]);
-    try {
-      const response = await fetch('/api/generate', { method: 'POST', signal: controller.signal,
-        headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ prompt, currentProgram: program }) });
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.error || '生成失败，请重试。');
-      validateProgram(data.program);
-      if (ticket !== sequence.current) return;
-      setMode(data.mode);
-      if (data.program !== program) {
-        setProgram(data.program);
-        setVersions((history) => [...history, { program: data.program, label: prompt.slice(0, 18) }].slice(-12));
-      }
-      setMessages((history) => [...history, { role: 'assistant', text: data.message }]);
-    } catch (err) {
-      if (ticket === sequence.current && !controller.signal.aborted) setError(err instanceof Error ? err.message : '网络不可用，请检查服务。');
-    } finally { if (ticket === sequence.current) setBusy(false); }
-  }
-  function cancel() {
-    ++sequence.current; request.current?.abort(); setBusy(false);
-    setMessages((history) => [...history, { role: 'assistant', text: '已取消本次生成，保留上一个有效版本。' }]);
-  }
-  function reset() {
-    ++sequence.current; request.current?.abort(); setBusy(false); setError('');
-    setProgram(INITIAL_PROGRAM); setVersions([{ program: INITIAL_PROGRAM, label: '初始工作台' }]); setView('preview');
-    setMessages([{ role: 'assistant', text: '新的画布，新的可能。想先设计什么？' }]);
-  }
-  function submit(event: FormEvent) { event.preventDefault(); void send(input); }
-  function download() {
-    const url = URL.createObjectURL(new Blob([program], { type: 'text/plain;charset=utf-8' }));
-    const link = document.createElement('a'); link.href = url; link.download = 'forma-replay.openui'; link.click();
-    setTimeout(() => URL.revokeObjectURL(url), 1000);
-  }
-  async function copy() {
-    try { await navigator.clipboard.writeText(program); setCopied(true); clearTimeout(copyTimer.current); copyTimer.current = setTimeout(() => setCopied(false), 1500); }
-    catch { setError('无法访问剪贴板，请使用导出按钮。'); }
-  }
-
-  return <div className="app-shell">
-    <header className="topbar"><a className="brand" href="/" aria-label="Forma Replay 首页"><span className="brand-mark">f<span>↗</span></span><strong>forma<span> / replay</span></strong><span className="alpha-badge">LAB 01</span></a>
-      <div className="topbar-right"><span className="build-note"><span className="status-dot" /> An idea, taking shape.</span><a className="repo-link" href="https://github.com/xianxianxianyu/forma-replay" target="_blank" rel="noreferrer">GitHub <ArrowUp size={13} /></a><span className="avatar">F</span></div>
-    </header>
-    <div className="workspace">
-      <aside className="chat-panel">
-        <div className="chat-panel-top"><div><span className="eyebrow">THE CONVERSATION</span><h1>好控件，聊出来。</h1></div><button className="icon-button" aria-label="新建对话" title="新建对话" onClick={reset}><Plus size={18} /></button></div>
-        <div className="session-label"><MessageSquare size={14} /><span>Untitled exploration</span><span className="session-dot" /></div>
-        <div className="chat-scroll"><div className="intro-symbol"><WandSparkles size={24} strokeWidth={1.5} /></div>
-          <h2 className="intro-title">Less prompting.<br /><span>More possibility.</span></h2><p className="intro-copy">从一个想法开始。生成、调整，然后看着<br className="desktop-break" />每一次变化重新成形。</p>
-          <div className="suggestions">{suggestions.map((item) => <button key={item.title} disabled={busy} onClick={() => void send(item.prompt)}><span>{item.icon}</span>{item.title}<ArrowUp size={13} /></button>)}</div>
-          <div className="messages" role="log" aria-label="对话记录" aria-live="polite">{messages.map((message, i) => <div className={`message message-${message.role}`} key={i}>{message.role === 'assistant' && <span className="assistant-mark"><Sparkles size={13} /></span>}<p>{message.text}</p></div>)}
-            {busy && <div className="generating-message"><LoaderCircle className="spin" size={14} /> 正在构思，完成校验后呈现…</div>}<div ref={messageEnd} />
+    if (firstUser && !title) void runtime.threads.mainItem.rename(firstUser.slice(0, 32)).catch(() => {});
+  }, [firstUser, title, threadId, runtime]);
+  return <ReplayPreferences.Provider value={{ enabled: motion, seen, widgetStates }}>
+    <a className="skip-link" href="#conversation">跳到对话</a>
+    <div className="chat-app">
+      <aside className="sidebar" aria-label="对话导航">
+        <a className="brand" href="/" aria-label="myPi Forma 首页"><span className="brand-mark">f<span>↗</span></span><strong>myPi<span> / Forma</span></strong></a>
+        <ThreadListPrimitive.Root className="thread-list">
+          <ThreadListPrimitive.New className="new-thread" disabled={running}><Plus size={17} />新建对话</ThreadListPrimitive.New>
+          <div className="sidebar-section-label">本次会话</div>
+          <div className="thread-items"><ThreadListPrimitive.Items components={{ ThreadListItem: ThreadItem }} /></div>
+        </ThreadListPrimitive.Root>
+        <details className="sidebar-examples" open={examplesOpen} onToggle={(event) => setExamplesOpen(event.currentTarget.open)}>
+          <summary>金融示例<span>点击即发送</span></summary>
+          <div className="example-list" role="group" aria-label="金融示例提示">
+            {demoPrompts.map((item) => <button type="button" key={item.id} disabled={exampleUnavailable}
+              onClick={() => sendExample(item.prompt)}><span>{item.title}<ArrowUp size={13} aria-hidden="true" /></span><small>{item.description}</small></button>)}
           </div>
-        </div>
-        <div className="composer-wrap">{error && <div className="error-message" role="alert">{error}</div>}
-          <form className="composer" onSubmit={submit}><label className="sr-only" htmlFor="prompt">描述你想要的控件</label><textarea id="prompt" placeholder="描述你想要的控件，或继续修改…" value={input} maxLength={2000} onChange={(event) => setInput(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); if (!busy) void send(input); } }} />
-            <div className="composer-bottom"><span className="mode-label"><span className={`status-dot ${mode === 'live' ? '' : 'amber'}`} />{mode === 'demo' ? '本地演示 · 非 AI' : mode === 'live' ? model : mode === 'offline' ? 'API 未连接' : '连接中…'}</span>
-              {busy ? <button type="button" className="send-button" onClick={cancel} aria-label="停止生成"><Square size={14} /></button> : <button className="send-button" type="submit" disabled={!input.trim() || mode === 'offline' || mode === 'connecting'} aria-label="发送消息"><ArrowUp size={18} /></button>}</div>
-          </form><p className="composer-hint"><Command size={11} /> Enter 发送 · Shift Enter 换行<span>{input.length}/2000</span></p>
-        </div>
+          <p className="example-note">{backend.mode === 'demo' ? '固定 Demo 不支持金融提示，请用 Pi 或 Codex 服务。' : '假设数据 · 发送到当前对话，调用所选模型并消耗额度。'}</p>
+        </details>
+        <div className="sidebar-bottom"><span className="sidebar-monogram">◌</span><p>让每一次变化<br />自然地发生。</p><span className="storage-note">对话仅保留在当前页面<br />刷新后会清空</span></div>
       </aside>
-      <main className="preview-panel">
-        <div className="preview-toolbar"><div className="view-tabs"><button className={view === 'preview' ? 'active' : ''} onClick={() => setView('preview')}><Monitor size={15} /> 预览</button><button className={view === 'code' ? 'active' : ''} onClick={() => setView('code')}><Code2 size={15} /> OpenUI</button></div>
-          <div className="preview-actions"><label className="version-picker"><Layers3 size={14} /><select aria-label="查看历史版本" value={versions.findIndex((v) => v.program === program)} disabled={busy} onChange={(event) => { setProgram(versions[Number(event.target.value)].program); setView('preview'); }}>{versions.map((version, i) => <option key={i} value={i}>v{ i + 1 } · {version.label}</option>)}</select><ChevronDown size={12} /></label>
-            <button className="export-button" onClick={download}><ArrowDownToLine size={14} /><span>导出</span></button></div>
-        </div>
-        <div className="canvas-meta"><span><span className="status-dot" /> LIVE CANVAS <span className="meta-divider">/</span> {mode === 'live' ? 'MODEL GENERATED' : 'SAMPLE DATA'}</span><span>OpenUI × transitions.dev</span></div>
-        <div className="canvas-scroll" hidden={view !== 'preview'}>
-          <MotionContext.Provider value={{ enabled: motion && view === 'preview', replay }}>
-            <Renderer response={program} library={library} isStreaming={false} onError={(errors) => { if (errors.length) setError('控件呈现失败，请恢复历史版本或新建对话。'); }} />
-          </MotionContext.Provider>
-          <div className="canvas-footnote"><span className="footnote-line" /><span>Crafted through conversation. Brought to life with motion.</span><span className="footnote-line" /></div>
-        </div>
-        {view === 'code' && <div className="code-pane"><div><span>OPENUI LANG · 当前有效版本</span><button onClick={() => void copy()}>{copied ? <Check size={14} /> : <Code2 size={14} />}{copied ? '已复制' : '复制代码'}</button></div><pre><code>{program}</code></pre><p>仅渲染注册控件，不执行模型生成的 HTML 或 JavaScript。</p></div>}
-        <footer className="motion-toolbar"><div><span className="motion-glyph">◌</span><div><strong>每一次变化，都值得被看见。</strong><span>数据提交后重播 · 不因普通重渲染触发</span></div></div><div className="motion-controls"><label><input type="checkbox" checked={motion} onChange={(event) => setMotion(event.target.checked)} /> 构建动画</label><button onClick={() => { setView('preview'); setReplay((n) => n + 1); }} disabled={!motion}><RotateCcw size={14} /> 重播</button></div></footer>
+      <main className="conversation-main" id="conversation" tabIndex={-1}>
+        <header className="chat-header"><div><span className="eyebrow">A CONVERSATION, TAKING SHAPE</span><h1>好控件，聊出来。</h1></div>
+          <div className="chat-header-controls">
+            {backend.mode !== 'demo' && backend.mode !== 'openai' && <label className="backend-picker">生成后端
+              <select aria-label="生成后端" value={backend.selection} disabled={running || backend.mode === 'connecting'}
+                onChange={(event) => void backend.refresh(event.target.value as SelectableBackend)}>
+                <option value="pi">Pi · DeepSeek Flash</option><option value="codex">Codex CLI</option>
+              </select>
+            </label>}
+            <label className="motion-toggle"><input type="checkbox" checked={motion} onChange={(event) => setMotion(event.target.checked)} />构建动画</label>
+          </div>
+        </header>
+        <ThreadPrimitive.Root className="chat-thread">
+          <ThreadPrimitive.Viewport className="thread-viewport" turnAnchor="top" scrollToBottomOnInitialize={false} scrollToBottomOnThreadSwitch={false} aria-label="对话记录">
+            <div className="conversation-content" role="log" aria-label="消息" aria-live="polite" aria-relevant="additions">
+              <ThreadPrimitive.Empty>
+                <section className="welcome"><div className="welcome-symbol"><Sparkles size={25} strokeWidth={1.5} aria-hidden="true" /></div>
+                  <span className="eyebrow">FROM A THOUGHT TO SOMETHING REAL</span>
+                  <h2>从一个想法，<br /><em>开始一段对话。</em></h2>
+                  <p>说说你想做什么。文字、图表与可交互控件，<br className="welcome-break" />都会自然地出现在这里。</p>
+                  <div className="suggestions">{suggestions.map((item) => <ThreadPrimitive.Suggestion key={item.label} prompt={item.prompt} send disabled={!backend.ready}>
+                    <span>{item.label}<ArrowUp size={14} /></span><small>{item.description}</small>
+                  </ThreadPrimitive.Suggestion>)}</div>
+                  <p className="welcome-note">assistant-ui 聊天 · OpenUI 控件 · transitions 动画</p>
+                </section>
+              </ThreadPrimitive.Empty>
+              <ThreadPrimitive.Messages components={threadMessages} />
+            </div>
+          </ThreadPrimitive.Viewport>
+          <div className="composer-dock">
+            <ThreadPrimitive.ScrollToBottom className="scroll-to-bottom" aria-label="回到最新消息"><ArrowDown size={16} /></ThreadPrimitive.ScrollToBottom>
+            {backend.error && <div className="backend-error" role="alert">{backend.error}<button onClick={() => void backend.refresh()}>重新检测</button></div>}
+            <ComposerPrimitive.Root className="composer">
+              <ComposerPrimitive.Input aria-label="输入消息" placeholder="描述一个控件，或者先聊聊你的想法…" maxLength={2000} rows={2} maxRows={6}
+                disabled={!backend.ready} addAttachmentOnPaste={false} submitMode="enter" />
+              <div className="composer-bottom"><span className="mode-label"><span className={`status-dot ${backend.mode === 'demo' || !backend.ready ? 'amber' : ''}`} />{backendLabel(backend)}</span>
+                {running ? <ComposerPrimitive.Cancel className="send-button" aria-label="停止生成"><Square size={15} /></ComposerPrimitive.Cancel>
+                  : <ComposerPrimitive.Send className="send-button" aria-label="发送消息" disabled={!backend.ready}><ArrowUp size={18} /></ComposerPrimitive.Send>}
+              </div>
+            </ComposerPrimitive.Root>
+            <p className="composer-note"><span>Enter 发送 · Shift Enter 换行</span><span>控件在回复中呈现，不会覆盖旧消息。</span></p>
+          </div>
+        </ThreadPrimitive.Root>
       </main>
     </div>
-  </div>;
+  </ReplayPreferences.Provider>;
+}
+
+export default function App() {
+  const backend = useBackend();
+  const currentBackend = useRef(backend.mode);
+  currentBackend.current = backend.mode;
+  const [adapter] = useState(() => createChatAdapter(fetch, () => {
+    const mode = currentBackend.current;
+    return mode === 'pi' || mode === 'codex' ? mode : undefined;
+  }));
+  const runtime = useLocalRuntime(adapter);
+  return <BackendContext.Provider value={backend}><AssistantRuntimeProvider runtime={runtime}>
+    <ChatShell runtime={runtime} />
+  </AssistantRuntimeProvider></BackendContext.Provider>;
 }

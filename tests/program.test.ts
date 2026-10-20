@@ -6,22 +6,23 @@ describe('bounded OpenUI contract', () => {
   it('validates the initial board and all demo branches', () => {
     expect(validateProgram(INITIAL_PROGRAM).typeName).toBe('Showcase');
     for (const prompt of ['更新数据', '订阅套餐', '中文', '紫色', '橙色', '绿色', '重置']) {
-      expect(() => validateProgram(createDemoProgram(prompt, INITIAL_PROGRAM).program)).not.toThrow();
+      expect(() => validateProgram(createDemoProgram(prompt, INITIAL_PROGRAM).program!)).not.toThrow();
     }
   });
   it('preserves unchanged statements and reports unknown demo requests honestly', () => {
-    const next = createDemoProgram('紫色', INITIAL_PROGRAM).program;
+    const next = createDemoProgram('紫色', INITIAL_PROGRAM).program!;
     expect(next).toContain('preferences = PreferenceCard');
     const before = validateProgram(INITIAL_PROGRAM).props.children as { props: unknown }[];
     const after = validateProgram(next).props.children as { props: unknown }[];
     expect(after[3].props).toEqual(before[3].props);
     const unknown = createDemoProgram('build a spaceship', next);
-    expect(unknown.program).toBe(next);
-    expect(unknown.message).toContain('本次没有修改');
+    expect(unknown.program).toBeNull();
+    expect(unknown.message).toContain('本次没有生成');
+    expect(createDemoProgram('先不要生成，介绍支持的控件', '').program).toBeNull();
   });
   it('preserves literal escaping', () => {
     const withQuote = INITIAL_PROGRAM.replace('Total revenue', 'Total \\"revenue\\"');
-    expect(() => validateProgram(createDemoProgram('紫色', withQuote).program)).not.toThrow();
+    expect(() => validateProgram(createDemoProgram('紫色', withQuote).program!)).not.toThrow();
   });
   it.each([
     'root = Script("alert(1)")',

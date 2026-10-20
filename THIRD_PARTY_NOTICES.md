@@ -18,6 +18,16 @@ These files are **not MIT licensed**. Their license permits use and modification
 
 The TypeScript declaration and lifecycle adapter are original project code. This repository does not redistribute the upstream skill collection.
 
+## Open Intelligent UI
+
+Source: https://github.com/thesysdev/open-intelligent-ui/tree/03213439358bf3408ad61a46ec9e3230c5572e48
+
+Pinned upstream commit: `03213439358bf3408ad61a46ec9e3230c5572e48`.
+
+Copyright (c) 2026 Thesys Inc. Licensed under MIT; the full notice is preserved at `src/components/intelligent/LICENSE`.
+
+Adapted component implementations, design tokens, functions, local synthetic data, clipboard helper, prompt rules and examples live in `src/components/intelligent/`. Adapted upstream computation tests live in `tests/intelligent/functions/`. File origins, exclusions and local changes are recorded in `src/components/intelligent/README.md`. The upstream AgentInterface application and API routes are not redistributed here.
+
 ## Dependencies
 
 OpenUI, React, Vite, Express, Zod and other npm dependencies retain their own licenses in their installed packages. Lucide icons are used under their package license. Exact versions are pinned by `package-lock.json`.

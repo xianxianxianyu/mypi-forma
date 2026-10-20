@@ -1,19 +1,36 @@
-import { createParser, type ElementNode } from '@openuidev/lang-core';
+import { evaluateRoot, type ElementNode, type OpenUIError } from '@openuidev/lang-core';
 import { z } from 'zod';
 import { library } from '../components/library';
 import { componentSchemas } from './schemas';
+import { parseAllowedProgram } from './program-policy';
+import { exampleDashboard, exampleShoppingList, exampleSteps } from '../components/intelligent/examples';
 
 const showcaseSchema = z.object({ title: z.string().min(1).max(100), subtitle: z.string().max(180), children: z.array(z.unknown()).min(1).max(6) });
 
-/** Static, bounded components only: no model-authored code, tools, or expressions. */
+/** Bounded declarative UI, local state and registered functions; never arbitrary code. */
 export function validateProgram(program: string): ElementNode {
-  if (program.length > 18000) throw new Error('生成内容过长，请缩小需求范围。');
-  const result = createParser(library.toJSONSchema(), library.root).parse(program);
-  if (!result.root || result.root.typeName !== 'Showcase' || result.meta.incomplete || result.meta.errors.length || result.meta.unresolved.length || result.meta.orphaned.length) {
-    throw new Error('生成的 OpenUI 不完整或包含不支持的控件，请重试。');
+  const result = parseAllowedProgram(program);
+  const schema = library.toJSONSchema();
+  const errors: OpenUIError[] = [];
+  const rootNode = evaluateRoot(result, { library, store: null, errors, ctx: {
+    getState: (name) => result.stateDeclarations[name],
+    resolveRef: () => ({ rows: [] }),
+    functions: Object.fromEntries(Object.entries(schema.functions ?? {}).map(([name, fn]) => [name, { ...fn, fn: library.functions[name]!.fn }])),
+    actions: schema.actions,
+  } });
+  if (!rootNode || errors.length) throw new Error('控件表达式无法求值，请检查参数。');
+  let count = 0;
+  function check(value: unknown, depth = 0) {
+    if (++count > 25000 || depth > 64) throw new Error('控件展开规模过大。');
+    if (!value || typeof value !== 'object') return;
+    if (Array.isArray(value)) { if (value.length > 5000) throw new Error('数据规模过大。'); value.forEach((v) => check(v, depth + 1)); return; }
+    const item = value as Record<string, unknown>;
+    if (item.type === 'element' && (typeof item.typeName !== 'string' || !Object.hasOwn(library.components, item.typeName))) throw new Error('包含未注册的控件。');
+    Object.values(item).forEach((v) => check(v, depth + 1));
   }
-  if (Object.keys(result.stateDeclarations ?? {}).length || result.rootExpression) throw new Error('仅支持静态控件描述。');
-  const root = showcaseSchema.parse(result.root.props);
+  check(rootNode);
+  if (rootNode.typeName !== 'Showcase') return rootNode;
+  const root = showcaseSchema.parse(rootNode.props);
   const ids = new Set<string>();
   for (const child of root.children) {
     const node = child as ElementNode;
@@ -27,7 +44,7 @@ export function validateProgram(program: string): ElementNode {
       if (chart.labels.length !== chart.values.length) throw new Error('图表标签与数值数量不匹配。');
     }
   }
-  return result.root;
+  return rootNode;
 }
 
 const q = JSON.stringify;
@@ -46,8 +63,18 @@ members = MetricCard("members", "Active members", "1,842", "+12.8%", "a growing 
 activity = ActivityChart("activity", "A little progress, every day.", "每一步，都是值得看见的增长。", [28, 42, 36, 65, 57, 86, 104], ["MON", "TUE", "WED", "THU", "FRI", "SAT", "SUN"])
 preferences = PreferenceCard("preferences", "Make it yours.", "让工作空间按照你的节奏运转。", ["消息通知", "每周摘要", "专注模式"])`;
 
-export function createDemoProgram(prompt: string, currentProgram: string): { program: string; message: string } {
-  const board = validateProgram(currentProgram || INITIAL_PROGRAM);
+export function createDemoProgram(prompt: string, currentProgram: string): { program: string | null; message: string } {
+  if (/先不要|不要生成|先聊|介绍|你能|hello|你好/i.test(prompt)) {
+    return { program: null, message: '这是本地演示，不会调用 AI。我可以按固定规则展示卡片、交互分析、购物清单和 SVG 步骤。试试“生成营收分析”或“购物清单”；自由对话请切换到 Codex CLI 后端。' };
+  }
+  if (/筛选|分析|分析图表|analytics/i.test(prompt)) return { program: exampleDashboard, message: '这是迁移后的交互分析示例：使用本地合成数据，切换地区即可重算，不会调用 AI。' };
+  if (/清单|采购|shopping/i.test(prompt)) return { program: exampleShoppingList, message: '这是本地购物清单示例：调整人数、勾选物品和复制清单均在本地完成，非 AI。' };
+  if (/步骤|书架|组装|steps/i.test(prompt)) return { program: exampleSteps, message: '这是本地 SVG 分步示例，切换步骤会更新说明与图示，非 AI。' };
+  const candidate = validateProgram(currentProgram || INITIAL_PROGRAM);
+  if (candidate.typeName !== 'Showcase' && !/价格|订阅|套餐|pricing|plan|仪表盘|dashboard|重置|重新开始/i.test(prompt)) {
+    return { program: null, message: '当前交互示例没有对应的本地修改规则；已有回复保持不变。自由修改请使用 Codex 后端，或输入“营收分析”“购物清单”“组装步骤”查看固定示例。' };
+  }
+  const board = candidate.typeName === 'Showcase' ? candidate : validateProgram(INITIAL_PROGRAM);
   let children = structuredClone(board.props.children) as ElementNode[];
   let title = String(board.props.title);
   let subtitle = String(board.props.subtitle);
@@ -59,7 +86,7 @@ export function createDemoProgram(prompt: string, currentProgram: string): { pro
     ];
     title = 'Small start. Big possibilities.'; subtitle = '两种节奏，同样出色的创作体验。价格仅为演示。'; matched = true;
   } else if (/仪表盘|dashboard|重置|重新开始/i.test(prompt)) {
-    return { program: INITIAL_PROGRAM, message: '已恢复初始工作台；变化区域将重新构建。' };
+    return { program: INITIAL_PROGRAM, message: '以下是使用示例数据的仪表盘（本地演示，非 AI）。你可以继续告诉我如何修改。' };
   }
   if (/紫|lavender|purple|绿|lime|green|橙|peach|orange/i.test(prompt)) {
     const tone = /紫|lavender|purple/i.test(prompt) ? 'lavender' : /橙|peach|orange/i.test(prompt) ? 'peach' : 'lime';
@@ -79,8 +106,8 @@ export function createDemoProgram(prompt: string, currentProgram: string): { pro
     children = children.map((node) => node.typeName === 'MetricCard' ? { ...node, props: { ...node.props, label: node.props.id === 'revenue' ? '总营收' : '活跃成员', caption: '较上月增长' } } : node.typeName === 'ActivityChart' ? { ...node, props: { ...node.props, title: '每天一点，看得见的进步。' } } : node);
     matched = true;
   }
-  if (!matched) return { program: currentProgram || INITIAL_PROGRAM, message: '本地演示只支持：仪表盘、订阅套餐、更新数据、切换紫/绿/橙色、改成中文。自由生成需要配置服务端模型；本次没有修改控件。' };
+  if (!matched) return { program: null, message: '本地演示支持：营收分析、购物清单、组装步骤，以及原有仪表盘、订阅套餐、更新数据、切换紫/绿/橙色、改成中文。自由生成需要配置服务端模型；本次没有生成新控件。' };
   const program = serializeBoard(title, subtitle, children);
   validateProgram(program);
-  return { program, message: '已应用本地演示规则。只有内容变化的控件会重新播放构建动画；开关等本地交互状态保持不变。' };
+  return { program, message: '已按本地演示规则生成这一版控件。之前的回复和交互状态保留在原消息中；这条回复的控件可以独立操作。' };
 }

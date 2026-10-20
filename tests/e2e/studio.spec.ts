@@ -1,59 +1,107 @@
 import { test, expect } from '@playwright/test';
+import { INITIAL_PROGRAM } from '../../src/lib/program';
 
-test('chat edits only changed widgets, keeps interaction state and replays safely', async ({ page }) => {
+test('new UI replies preserve historical interactions; scoped replay and source controls never remount cards', async ({ page }) => {
   const errors: string[] = []; page.on('pageerror', (error) => errors.push(error.message));
   await page.goto('/');
+  await expect(page).toHaveTitle('myPi Forma — Dynamic UI');
+  await expect(page.getByRole('link', { name: 'myPi Forma 首页', exact: true })).toBeVisible();
   await expect(page.getByText('本地演示 · 非 AI')).toBeVisible();
-  await expect(page.locator('.motion-region').first()).toHaveAttribute('data-motion', 'idle', { timeout: 7000 });
-  await expect(page.locator('.t-gen')).toHaveCount(0, { timeout: 7000 });
+  await expect(page.locator('[data-widget-id]')).toHaveCount(0);
+  await page.getByRole('button', { name: /生成增长仪表盘/ }).click();
   await expect(page.locator('[data-widget-id]')).toHaveCount(4);
-  const toggle = page.getByRole('switch', { name: '消息通知' });
+  await expect(page.locator('.t-gen')).toHaveCount(0, { timeout: 7000 });
+  await expect(page.getByRole('article', { name: '用户消息', exact: true })).toBeInViewport();
+  const oldBlock = page.locator('[data-openui-block]').first();
+  const toggle = oldBlock.getByRole('switch', { name: '消息通知' });
   await toggle.uncheck(); await expect(toggle).not.toBeChecked();
-  await page.getByRole('button', { name: '换成柔和紫色' }).click();
-  await expect(page.locator('[data-widget-id="revenue"]')).toHaveClass(/tone-lavender/);
+  await oldBlock.getByRole('button', { name: '月', exact: true }).click();
+  await page.getByLabel('输入消息').fill('换成柔和紫色');
+  await page.getByRole('button', { name: '发送消息' }).click();
+  await expect(page.locator('[data-openui-block]')).toHaveCount(2);
+  const newBlock = page.locator('[data-openui-block]').last();
+  await expect(newBlock.locator('[data-widget-id="revenue"]')).toHaveClass(/tone-lavender/);
+  await expect(oldBlock.locator('[data-widget-id="revenue"]')).toHaveClass(/tone-lime/);
   await expect(toggle).not.toBeChecked();
-  // Unchanged settings must not replay on a metric-only edit.
-  await expect(page.locator('.motion-region').filter({ has: page.locator('[data-widget-id="preferences"]') })).toHaveAttribute('data-motion', 'idle');
+  await expect(oldBlock.getByRole('button', { name: '月', exact: true })).toHaveAttribute('aria-pressed', 'true');
+  await expect(newBlock.getByRole('switch', { name: '消息通知' })).toBeChecked();
   await expect(page.locator('.t-gen')).toHaveCount(0, { timeout: 7000 });
-  await page.getByRole('button', { name: '重播', exact: true }).click();
+  const newToggle = newBlock.getByRole('switch', { name: '消息通知' });
+  await newToggle.uncheck();
+  await newBlock.getByRole('button', { name: '重播动画' }).click();
   await expect(page.locator('.t-gen').first()).toBeVisible();
-  await page.getByRole('button', { name: '重播', exact: true }).click();
+  await newBlock.getByRole('button', { name: '重播动画' }).click();
   expect(await page.locator('.t-gen').count()).toBeLessThanOrEqual(4);
+  await expect(oldBlock.locator('.motion-region').first()).toHaveAttribute('data-motion', 'idle');
   await expect(page.locator('.t-gen')).toHaveCount(0, { timeout: 7000 });
-  await page.getByRole('button', { name: 'OpenUI', exact: true }).click();
-  await expect(page.locator('.code-pane pre')).toContainText('MetricCard');
+  await expect(newToggle).not.toBeChecked();
+  await page.getByLabel('构建动画').uncheck();
+  await expect(newBlock.getByRole('button', { name: '重播动画' })).toBeDisabled();
+  await page.getByLabel('构建动画').check();
+  await expect(newBlock.locator('.motion-region').first()).toHaveAttribute('data-motion', 'idle');
+  await expect(page.locator('.t-gen')).toHaveCount(0);
+  await newBlock.getByRole('button', { name: '查看源码' }).click();
+  await expect(newBlock.getByLabel('OpenUI 源码')).toContainText('MetricCard');
+  await expect(newToggle).not.toBeChecked();
   const downloaded = page.waitForEvent('download');
-  await page.getByRole('button', { name: '导出' }).click();
-  expect((await downloaded).suggestedFilename()).toBe('forma-replay.openui');
+  await newBlock.getByRole('button', { name: '导出控件' }).click();
+  expect((await downloaded).suggestedFilename()).toMatch(/^mypi-forma-.+\.openui$/);
   expect(errors).toEqual([]);
 });
 
-test('pricing controls, version restore, reduced motion and mobile layout', async ({ page }) => {
+test('pricing, reduced motion, keyboard composer and narrow chat layout', async ({ page }) => {
   await page.emulateMedia({ reducedMotion: 'reduce' });
+  await page.setViewportSize({ width: 390, height: 844 });
   await page.goto('/');
   await expect(page.getByText('本地演示 · 非 AI')).toBeVisible();
-  await page.getByRole('button', { name: '设计订阅套餐' }).click();
+  await page.getByRole('button', { name: /设计订阅套餐/ }).click();
   await expect(page.getByRole('heading', { name: 'Studio', exact: true })).toBeVisible();
   await page.getByRole('button', { name: '选择 Studio' }).click();
   await expect(page.getByRole('button', { name: /已选择/ })).toHaveAttribute('aria-pressed', 'true');
-  await page.getByLabel('查看历史版本').selectOption('0');
-  await expect(page.getByText('Total revenue')).toBeVisible();
   await expect(page.locator('.t-gen')).toHaveCount(0);
-  await page.setViewportSize({ width: 390, height: 844 });
-  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+  const input = page.getByLabel('输入消息');
+  await input.fill('先聊聊'); await input.press('Shift+Enter');
+  await expect(input).toHaveValue('先聊聊\n');
+  await input.press('Enter');
+  await expect(page.getByText(/这是本地演示，不会调用 AI/)).toBeVisible();
+  await expect(page.locator('[data-openui-block]')).toHaveCount(1);
+  await expect(input).toBeEmpty();
+  for (const width of [390, 320]) {
+    await page.setViewportSize({ width, height: 844 });
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+  }
 });
 
-test('invalid results preserve the last valid preview; stop discards late responses', async ({ page }) => {
+test('invalid replies and cancellation leave older messages intact and ignore a late completed response', async ({ page }) => {
   await page.emulateMedia({ reducedMotion: 'reduce' });
   await page.goto('/');
-  await page.route('**/api/generate', (route) => route.fulfill({ status: 502, contentType: 'application/json', body: JSON.stringify({ error: '测试：模型不可用' }) }));
-  await page.getByRole('button', { name: '换成柔和紫色' }).click();
-  await expect(page.getByRole('alert')).toContainText('模型不可用');
+  await page.getByRole('button', { name: /生成增长仪表盘/ }).click();
   await expect(page.getByText('Total revenue')).toBeVisible();
+  await page.route('**/api/generate', (route) => route.fulfill({ json: { mode: 'codex', message: 'bad', program: 'root = Script("alert(1)")' } }));
+  await page.getByLabel('输入消息').fill('测试无效控件');
+  await page.getByRole('button', { name: '发送消息' }).click();
+  await expect(page.getByRole('alert')).toContainText('OpenUI');
+  await expect(page.locator('[data-openui-block]')).toHaveCount(1);
   await page.unroute('**/api/generate');
-  await page.route('**/api/generate', async (route) => { await new Promise((resolve) => setTimeout(resolve, 1500)); await route.abort(); });
-  await page.getByRole('button', { name: '更新增长数据' }).click();
+  let release!: () => void;
+  const barrier = new Promise<void>((resolve) => { release = resolve; });
+  let requested!: () => void;
+  const requestSeen = new Promise<void>((resolve) => { requested = resolve; });
+  await page.route('**/api/generate', async (route) => {
+    requested(); await barrier;
+    await route.fulfill({ json: { mode: 'codex', message: '不应该显示的迟到回复', program: INITIAL_PROGRAM.replace('$24,680', '$99,999') } }).catch(() => {});
+  });
+  await page.getByLabel('输入消息').fill('测试取消');
+  await page.getByRole('button', { name: '发送消息' }).click();
+  await requestSeen;
   await page.getByRole('button', { name: '停止生成' }).click();
-  await expect(page.getByText('已取消本次生成，保留上一个有效版本。')).toBeVisible();
-  await expect(page.getByText('Total revenue')).toBeVisible();
+  await expect(page.getByText('已停止生成，之前的消息和控件保持不变。')).toBeVisible();
+  release();
+  await page.unroute('**/api/generate');
+  await page.getByLabel('输入消息').fill('你好');
+  await page.getByRole('button', { name: '发送消息' }).click();
+  await expect(page.getByText(/这是本地演示，不会调用 AI/)).toBeVisible();
+  await expect(page.getByText('不应该显示的迟到回复')).toHaveCount(0);
+  await expect(page.locator('[data-openui-block]')).toHaveCount(1);
+  await expect(page.locator('[data-openui-block]')).toContainText('$24,680');
 });
